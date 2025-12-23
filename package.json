@@ -1,0 +1,43 @@
+{
+  "name": "cs2-deepscope",
+  "version": "1.0.0",
+  "description": "CS2 DeepScope - Service to fetch CS2 player profiles from Game Coordinator",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc --watch",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop cs2-deepscope",
+    "pm2:restart": "pm2 restart cs2-deepscope",
+    "pm2:logs": "pm2 logs cs2-deepscope",
+    "pm2:delete": "pm2 delete cs2-deepscope"
+  },
+  "keywords": [
+    "steam",
+    "cs2",
+    "game-coordinator",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "node-cs2": "^2.2.1",
+    "steam-totp": "^2.1.2",
+    "steam-user": "^5.0.0",
+    "steamid": "^2.1.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
