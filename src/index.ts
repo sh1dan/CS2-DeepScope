@@ -180,6 +180,30 @@ async function main() {
   }
 }
 
+// Global error handlers - must be set before any async operations
+process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
+  const errorMessage = reason instanceof Error ? reason.message : String(reason);
+  
+  // Filter timeout errors - they're expected and handled by API
+  if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+    // Just log as warning, don't treat as critical error
+    logger.warn(`⏱️ Unhandled timeout rejection (handled by API): ${errorMessage}`);
+    return;
+  }
+  
+  // Log other unhandled rejections
+  logger.error(`❌ Unhandled Promise Rejection: ${errorMessage}`, { 
+    reason: reason instanceof Error ? reason.stack : reason 
+  });
+});
+
+process.on('uncaughtException', (error: Error) => {
+  logger.error(`❌ Uncaught Exception: ${error.message}`, { 
+    stack: error.stack 
+  });
+  process.exit(1);
+});
+
 // Run the service
 main();
 

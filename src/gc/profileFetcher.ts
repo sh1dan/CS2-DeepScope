@@ -95,15 +95,28 @@ export class ProfileFetcher {
 
       // Set timeout for request
       let timeout: NodeJS.Timeout;
+      let isResolved = false; // Flag to prevent multiple resolve/reject calls
 
       // Set up response handler for 'playersProfile#' event (node-cs2 specific)
       const eventName = `playersProfile#${steamId64}`;
       const responseHandler = async (profile: unknown) => {
+        // Prevent multiple calls
+        if (isResolved) {
+          logger.warn(`⚠️ Duplicate response handler call for ${steamId64}`);
+          return;
+        }
+
         // Type guard: ensure profile is CS2ProfileResponse
         if (!profile || typeof profile !== 'object') {
           logger.error('❌ Invalid profile response format - possible protobuf mismatch');
           logger.error('💡 Try running: npm update node-cs2');
-          throw new Error('Invalid profile response format - possible protobuf mismatch. Try updating node-cs2.');
+          if (!isResolved) {
+            isResolved = true;
+            clearTimeout(timeout);
+            this.gc.removeListener(eventName, responseHandler);
+            reject(new Error('Invalid profile response format - possible protobuf mismatch. Try updating node-cs2.'));
+          }
+          return;
         }
         const typedProfile = profile as CS2ProfileResponse;
         
@@ -112,7 +125,10 @@ export class ProfileFetcher {
           logger.warn('⚠️ Profile response missing account_id - possible protobuf mismatch');
           logger.warn('💡 Try running: npm update node-cs2');
         }
+        
         try {
+          if (isResolved) return;
+          isResolved = true;
           clearTimeout(timeout);
           
           const parsedProfile = await this.parseProfileResponse(typedProfile, steamId64);
@@ -125,6 +141,9 @@ export class ProfileFetcher {
           this.gc.removeListener(eventName, responseHandler);
           resolve(parsedProfile);
         } catch (error: unknown) {
+          if (isResolved) return;
+          isResolved = true;
+          clearTimeout(timeout);
           this.gc.removeListener(eventName, responseHandler);
           const errorMessage = error instanceof Error ? error.message : String(error);
           logger.error(`❌ Failed to parse profile response: ${errorMessage}`, { error });
@@ -138,6 +157,8 @@ export class ProfileFetcher {
 
       // Set timeout for request
       timeout = setTimeout(() => {
+        if (isResolved) return;
+        isResolved = true;
         this.gc.removeListener(eventName, responseHandler);
         reject(new Error(`Timeout waiting for profile response for ${steamId64}`));
       }, TIMING.PROFILE_REQUEST_TIMEOUT_MS);
@@ -147,14 +168,22 @@ export class ProfileFetcher {
         if (this.gc.requestPlayersProfile) {
           this.gc.requestPlayersProfile(steamId64);
         } else {
-          throw new Error('requestPlayersProfile method not available on GC instance');
+          if (!isResolved) {
+            isResolved = true;
+            clearTimeout(timeout);
+            this.gc.removeListener(eventName, responseHandler);
+            reject(new Error('requestPlayersProfile method not available on GC instance'));
+          }
         }
       } catch (error: unknown) {
-        clearTimeout(timeout);
-        this.gc.removeListener(eventName, responseHandler);
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error(`❌ Failed to send GC request: ${errorMessage}`);
-        reject(error);
+        if (!isResolved) {
+          isResolved = true;
+          clearTimeout(timeout);
+          this.gc.removeListener(eventName, responseHandler);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger.error(`❌ Failed to send GC request: ${errorMessage}`);
+          reject(error);
+        }
       }
     });
   }

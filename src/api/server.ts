@@ -99,10 +99,11 @@ export class APIServer {
           }
         }
 
-        // Fetch fresh data from GC
-        const profile = await this.profileFetcher.fetchProfile(steamId64);
-
-        // Profile data ready for use
+        // Fetch fresh data from GC with proper error handling
+        const profile = await this.profileFetcher.fetchProfile(steamId64).catch((error: unknown) => {
+          // Re-throw to be caught by outer try-catch
+          throw error;
+        });
 
         res.json({
           ...profile,
@@ -110,10 +111,23 @@ export class APIServer {
         });
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        
+        // Handle timeout errors specifically
+        if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+          logger.warn(`⏱️ Profile request timeout for ${steamId64} - GC may be slow or overloaded`);
+          return res.status(504).json({
+            error: 'Request timeout',
+            message: 'The Game Coordinator did not respond in time. Please try again later.',
+            steamId64,
+          });
+        }
+        
+        // Handle other errors
         logger.error(`❌ Error fetching profile for ${steamId64}: ${errorMessage}`);
         res.status(500).json({
           error: 'Failed to fetch player profile',
           message: errorMessage,
+          steamId64,
         });
       }
     });
