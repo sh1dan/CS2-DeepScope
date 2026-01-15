@@ -85,6 +85,90 @@ async function main() {
     const apiServer = new APIServer(profileFetcher, gcConnection, apiPort);
     const httpServer = apiServer.start();
     
+    // Setup Steam reconnection monitoring for Wednesday maintenance recovery
+    // This handles automatic GC reconnection when Steam services restart
+    let isSteamLoggedIn = true;
+    let hasInitialLogin = false;
+    let gcReconnectInterval: NodeJS.Timeout | null = null;
+    
+    // Mark initial login as complete after a delay (to distinguish from reconnections)
+    setTimeout(() => {
+      hasInitialLogin = true;
+    }, TIMING.STEAM_INIT_DELAY_MS + TIMING.PERSONA_SET_DELAY_MS + TIMING.GC_LAUNCH_DELAY_MS + 5000);
+    
+    // Monitor Steam connection status for reconnections
+    steamClient.on('loggedOn', () => {
+      // Only trigger reconnection logic if this is a reconnection (not initial login)
+      if (hasInitialLogin && !isSteamLoggedIn) {
+        logger.info('🔄 Steam reconnected after disconnect - reinitializing GC connection...');
+        isSteamLoggedIn = true;
+        
+        // Re-launch CS2 to establish GC connection
+        setTimeout(async () => {
+          try {
+            logger.info('🔄 Restoring persona state and CS2 game status...');
+            steamClient.setPersona(1);
+            await new Promise(resolve => setTimeout(resolve, TIMING.PERSONA_SET_DELAY_MS));
+            
+            logger.info('🔄 Re-launching CS2 to reconnect to GC...');
+            steamClient.gamesPlayed([730]);
+            await new Promise(resolve => setTimeout(resolve, TIMING.GC_LAUNCH_DELAY_MS));
+            
+            logger.info('🔄 Attempting GC reconnection...');
+            await gcConnection.attemptConnection();
+            
+            // Start background retry for GC connection
+            if (gcReconnectInterval) {
+              clearInterval(gcReconnectInterval);
+            }
+            
+            logger.info('🔄 Starting GC reconnection retry loop...');
+            gcReconnectInterval = setInterval(async () => {
+              if (gcConnection.isGcReady()) {
+                logger.info('✅ GC reconnected successfully after Steam restart');
+                if (gcReconnectInterval) {
+                  clearInterval(gcReconnectInterval);
+                  gcReconnectInterval = null;
+                }
+                return;
+              }
+              try {
+                await gcConnection.attemptConnection();
+                await new Promise(resolve => setTimeout(resolve, TIMING.GC_BACKGROUND_RETRY_DELAY_MS));
+                if (gcConnection.isGcReady()) {
+                  logger.info('✅ GC reconnected successfully after Steam restart');
+                  if (gcReconnectInterval) {
+                    clearInterval(gcReconnectInterval);
+                    gcReconnectInterval = null;
+                  }
+                }
+              } catch {
+                // Silent retry
+              }
+            }, TIMING.GC_BACKGROUND_RETRY_INTERVAL_MS);
+          } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.warn(`⚠️ Failed to reinitialize GC after Steam reconnect: ${errorMessage}`);
+          }
+        }, TIMING.STEAM_INIT_DELAY_MS);
+      } else if (!hasInitialLogin) {
+        // This is the initial login, just mark it
+        isSteamLoggedIn = true;
+      }
+    });
+    
+    // Track Steam disconnects
+    steamClient.on('disconnected', () => {
+      logger.warn('⚠️ Steam disconnected - will auto-reconnect and restore GC connection');
+      isSteamLoggedIn = false;
+      
+      // Clear GC reconnect interval (will restart after Steam reconnects)
+      if (gcReconnectInterval) {
+        clearInterval(gcReconnectInterval);
+        gcReconnectInterval = null;
+      }
+    });
+    
     // Try to connect to GC
     let connected = false;
     const maxRetries = 3;
@@ -146,6 +230,12 @@ async function main() {
         if (backgroundRetry) {
           clearInterval(backgroundRetry);
           backgroundRetry = null;
+        }
+        
+        // Clear GC reconnect interval if active
+        if (gcReconnectInterval) {
+          clearInterval(gcReconnectInterval);
+          gcReconnectInterval = null;
         }
 
         // Close Express server
